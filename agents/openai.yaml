@@ -1,0 +1,7 @@
+interface:
+  display_name: "Task Companion"
+  short_description: "Plan tasks and stay focused with direct check-ins"
+  brand_color: "#1D5B53"
+  default_prompt: "Use $task-companion to help me choose today's next task and stay on track."
+policy:
+  allow_implicit_invocation: true

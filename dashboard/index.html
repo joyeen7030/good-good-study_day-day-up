@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <title>Task Companion · 今日专注</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#top" aria-label="陪跑工作台首页"><span class="brand-mark">伴</span><span><strong>陪跑工作台</strong></span></a>
+      <button class="nav-item active" data-view="today"><span class="nav-icon">◷</span>今日计划<span class="nav-count" id="todayCount">0</span></button>
+      <button class="nav-item" data-view="quadrants"><span class="nav-icon">▦</span>四象限看板</button>
+      <button class="nav-item" data-view="projects"><span class="nav-icon">⌘</span>长期项目<span class="nav-count" id="projectCount">0</span></button>
+      <button class="nav-item" data-view="archive"><span class="nav-icon">↗</span>复盘记录</button>
+      <div class="side-spacer"></div>
+      <div class="privacy-card"><span class="privacy-dot"></span><div><strong>本地数据</strong><p>只保存在这台 Mac</p></div><a href="/api/export" title="导出备份" class="export-link">↧</a></div>
+    </aside>
+
+    <main class="main" id="top">
+      <header class="topbar"><div class="breadcrumb">你的工作台 <span>/</span> <b id="crumbLabel">今日计划</b></div><div class="topbar-actions"><button class="ai-settings-button" id="settingsButton" title="AI 服务设置">AI 设置</button></div></header>
+
+      <section class="view active" id="view-today">
+        <div class="page-heading"><div><div class="eyebrow" id="todayDate">—</div></div><div class="heading-stat"><span class="stat-number" id="doneCount">0</span><span class="stat-caption">已完成</span><span class="stat-divider"></span><span class="stat-number" id="remainingCount">0</span><span class="stat-caption">待推进</span></div></div>
+
+        <div class="capture-card"><div class="capture-icon">＋</div><div class="capture-main"><label for="quickInput">快速收集一件事</label><div class="capture-row"><input id="quickInput" autocomplete="off" placeholder="例如：周五前改完论文第二章，预计 90 分钟"><button id="addTaskButton" class="button-primary">整理任务 <span>↗</span></button></div></div></div>
+
+        <div class="source-row"><button class="source-button" data-open-import="brief"><span class="source-symbol">▤</span><span><b>粘贴每日简报</b></span><span class="source-arrow">↗</span></button><button class="source-button" data-open-import="calendar"><span class="source-symbol calendar-symbol">▣</span><span><b>导入日历内容</b></span><span class="source-arrow">↗</span></button><button class="source-button project-source" id="newProjectButton"><span class="source-symbol">⌘</span><span><b>创建长期项目</b></span><span class="source-arrow">↗</span></button></div>
+
+        <div class="section-heading"><div><h2>现在做什么</h2></div><button class="text-button" data-view="quadrants">查看四象限 <span>→</span></button></div>
+        <div id="focusBanner" class="focus-banner hidden"></div>
+        <div id="progressLog" class="progress-log hidden" aria-live="polite"></div>
+        <div id="calendarFailures" class="calendar-failures hidden" aria-live="polite"></div>
+        <div id="todayTasks" class="task-list"></div>
+        <div id="emptyState" class="empty-state"><div class="empty-illustration"><span>✳</span><i></i><b></b></div><h3>空出来的时间，正等你安排。</h3><p>输入一件事，或者粘贴今天的简报开始整理。</p><button class="text-button" id="emptyAdd">＋ 添加第一项任务</button></div>
+      </section>
+
+      <section class="view" id="view-quadrants">
+        <div class="page-heading compact"><div><h1>先看清，再决定。</h1></div><button class="button-primary" id="quadrantAdd">＋ 新任务</button></div>
+        <div class="quadrant-grid">
+          <article class="quadrant q1"><header><span class="q-number">01</span><div><h2>重要 · 紧急</h2><p>现在推进</p></div><span class="q-count" id="count-q1">0</span></header><div class="quadrant-tasks" id="quad-q1"></div></article>
+          <article class="quadrant q2"><header><span class="q-number">02</span><div><h2>重要 · 不紧急</h2><p>安排时间</p></div><span class="q-count" id="count-q2">0</span></header><div class="quadrant-tasks" id="quad-q2"></div></article>
+          <article class="quadrant q3"><header><span class="q-number">03</span><div><h2>不重要 · 紧急</h2><p>快速处理</p></div><span class="q-count" id="count-q3">0</span></header><div class="quadrant-tasks" id="quad-q3"></div></article>
+          <article class="quadrant q4"><header><span class="q-number">04</span><div><h2>不重要 · 不紧急</h2><p>减少投入</p></div><span class="q-count" id="count-q4">0</span></header><div class="quadrant-tasks" id="quad-q4"></div></article>
+        </div>
+      </section>
+
+      <section class="view" id="view-projects">
+        <div class="page-heading compact"><div><h1>长期项目</h1></div><button class="button-primary" id="projectAdd">＋ 新项目</button></div>
+        <div id="projectsList" class="projects-grid"></div><div id="projectsEmpty" class="empty-state slim"><h3>还没有长期项目</h3><p>创建一个目标，再把每日行动关联到它。</p><button class="text-button" id="projectEmptyAdd">＋ 创建项目</button></div>
+      </section>
+
+      <section class="view" id="view-project-detail">
+        <button class="text-button project-back" id="projectBack">← 返回长期项目</button>
+        <div id="projectDetail"></div>
+      </section>
+
+      <section class="view" id="view-archive">
+        <div class="page-heading compact"><div><h1>复盘记录</h1></div></div><div id="historyList" class="history-list"></div><div id="historyEmpty" class="empty-state slim"><h3>完成一天的任务后，这里会留下记录。</h3><p>下次打开看板时，你可以快速回顾当天行动。</p></div>
+      </section>
+
+      <section class="companion-panel" id="companionPanel">
+        <div class="companion-header"><div class="companion-avatar">✳</div><div class="companion-title"><strong>陪跑助手</strong></div><span class="provider-badge">AI 待配置</span><button class="collapse-button" id="collapseChat" aria-label="收起聊天">−</button></div>
+        <div class="chat-transcript" id="chatTranscript"><div class="chat-message assistant"><span class="message-mark">✳</span><div class="message-content"><p>挑一件事，报出今天要交付的结果和时间。到点我会问你做出了什么；“还在做”不算进度。</p><p>配置 AI 服务后，聊天会按这个标准追问。</p></div><time>刚刚</time></div></div>
+        <div class="chat-compose"><textarea id="chatInput" rows="1" placeholder="先在右上角设置里配置 AI 服务" disabled></textarea><button id="sendChat" disabled aria-label="发送">↑</button></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modalRoot"></div>
+  <button class="companion-toggle-fab" id="companionToggle" type="button" aria-label="关闭悬浮窗"><span class="companion-toggle-icon">✳</span><span class="companion-toggle-copy"><small>桌面陪跑悬浮栏</small><strong id="companionToggleLabel">关闭悬浮窗</strong></span><span class="companion-toggle-indicator" aria-hidden="true"></span></button>
+  <div id="toast" class="toast" role="status"></div>
+</body>
+</html>
