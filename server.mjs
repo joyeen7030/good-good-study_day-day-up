@@ -169,6 +169,80 @@ async function providerModels(provider, apiKey) {
   return models.length ? models : [spec.model];
 }
 function safeProviderError(error) { return String(error?.message || 'AI 请求失败。').slice(0, 300); }
+function parseReviewAnalysis(text) {
+  const source = String(text || '').trim();
+  const candidate = source.match(/\{[\s\S]*\}/)?.[0];
+  if (!candidate) throw new Error('AI 没有返回可识别的复盘分析。');
+  const parsed = JSON.parse(candidate);
+  const clean = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+  const analysis = { pattern: clean(parsed.pattern), evidence: clean(parsed.evidence), experiment: clean(parsed.experiment) };
+  if (!analysis.pattern || !analysis.evidence || !analysis.experiment) throw new Error('AI 返回的复盘分析不完整。');
+  return analysis;
+}
+function buildReviewContext(state, reviewedTasks, reviewedDate) {
+  const targetDate = new Date(`${reviewedDate}T12:00:00`);
+  const startDate = new Date(targetDate);
+  startDate.setDate(startDate.getDate() - 13);
+  const start = dayStamp(startDate);
+  const recentHistory = state.history.filter(item => item.date >= start && item.date < reviewedDate).slice(-14).map(item => ({
+    date: item.date,
+    tasks: (item.tasks || []).map(task => ({ title: task.title, status: task.status, project: state.projects.find(project => project.id === task.projectId)?.title || null }))
+  }));
+  const recentProgress = state.progressLogs.filter(log => {
+    const date = dayStamp(new Date(log.createdAt));
+    return date >= start && date <= reviewedDate;
+  }).slice(-80).map(log => ({ date: dayStamp(new Date(log.createdAt)), task: log.taskTitle, message: log.message }));
+  const recentProjectWork = state.projectLogs.filter(log => log.date >= start && log.date <= reviewedDate).map(log => ({
+    date: log.date,
+    project: state.projects.find(project => project.id === log.projectId)?.title || '未知项目',
+    work: log.title || (log.titles || []).join('、'),
+    minutes: Math.round(Number(log.durationSeconds || 0) / 60)
+  }));
+  const projects = state.projects.filter(project => Number(project.estimatedProgress || 0) < 100).map(project => {
+    const logs = state.projectLogs.filter(log => log.projectId === project.id).sort((a, b) => b.date.localeCompare(a.date));
+    const lastLog = logs[0];
+    return {
+      title: project.title,
+      goal: project.description || '',
+      dueDate: project.dueAt || null,
+      progressPercent: Number(project.estimatedProgress || 0),
+      lastRecordedWorkDate: lastLog?.date || null,
+      lastRecordedWork: lastLog?.title || (lastLog?.titles || []).join('、') || null
+    };
+  });
+  return { reviewDate: reviewedDate, yesterdayTasks: reviewedTasks.map(task => ({
+    title: task.title,
+    status: task.status,
+    estimatedMinutes: task.estimatedMinutes || null,
+    project: state.projects.find(project => project.id === task.projectId)?.title || null
+  })), progressNotesLast14Days: recentProgress, projectWorkLast14Days: recentProjectWork, unfinishedProjects: projects, priorReviewsLast14Days: recentHistory };
+}
+async function analyzeDailyReview(state, reviewedTasks, reviewedDate) {
+  try {
+    const prefs = await readAiPrefs();
+    const provider = prefs.activeProvider;
+    const spec = aiProviders[provider];
+    const apiKey = spec ? await keychainGet(provider) : null;
+    if (!spec || !apiKey) return { analysis: null, analysisMessage: 'AI 未配置，复盘已正常保存；配置 AI 服务后才会生成习惯分析。' };
+    const model = prefs.models?.[provider] || spec.model;
+    const context = buildReviewContext(state, reviewedTasks, reviewedDate);
+    const system = `你是 Task Companion 的复盘分析助手。用中文简短、直接地反馈。根据用户最近14天的任务复盘、进度记录、专注投入和未完成长期项目，寻找可观察的行为模式（例如计划过量、延迟启动、遇难后停滞、反复回避某类步骤），但不能把一次未完成直接诊断成拖延或逃避，也不能把推测写成事实。先看证据，再给判断；证据不足时明确说“目前记录不足以判断稳定习惯”。关注未完成项目的停滞时长、目标/下一步是否模糊，但不要臆测原因。只给一条明天可试的小改变。不要羞辱人格、诊断心理疾病。只返回 JSON，不要 Markdown，格式为 {"pattern":"观察到的模式或证据不足","evidence":"引用具体日期、任务或进度记录","experiment":"明天可以尝试的一件小改变"}。每项不超过80个汉字。`;
+    const responsesApi = provider !== 'glm';
+    const messages = [{ role: 'system', content: system }, { role: 'user', content: JSON.stringify(context) }];
+    const requestBody = responsesApi
+      ? { model, instructions: system, input: [{ role: 'user', content: JSON.stringify(context) }], max_output_tokens: 350 }
+      : { model, messages, stream: false, max_tokens: 350, temperature: 0.4 };
+    const response = await fetch(`${spec.baseUrl}/${responsesApi ? 'responses' : 'chat/completions'}`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody), signal: AbortSignal.timeout(60_000) });
+    const raw = await response.text(); let result; try { result = JSON.parse(raw); } catch { result = {}; }
+    if (!response.ok) throw new Error(result.error?.message || `AI 服务请求失败（${response.status}）。`);
+    const reply = responsesApi
+      ? (result.output_text || result.output?.filter(item => item.type === 'message').flatMap(item => item.content || []).filter(item => item.type === 'output_text' || item.type === 'text').map(item => item.text).join(''))
+      : result.choices?.[0]?.message?.content;
+    return { analysis: parseReviewAnalysis(reply), analysisMessage: null };
+  } catch (error) {
+    return { analysis: null, analysisMessage: `AI 分析未生成：${safeProviderError(error)} 复盘已正常保存。` };
+  }
+}
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -438,12 +512,13 @@ const server = http.createServer(async (req, res) => {
       const reviewedDate = state.activeDate;
       const statuses = input.statuses || {};
       const reviewedTasks = state.dailyTasks.map(task => ({ ...task, status: statuses[task.id] || 'not-started' }));
+      const { analysis, analysisMessage } = await analyzeDailyReview(state, reviewedTasks, reviewedDate);
       for (const task of reviewedTasks) state.actions.push({ id: task.id, title: task.title, projectId: task.projectId || null, status: task.status, reviewedDate, reviewedAt: nowIso() });
       const counts = { complete: 0, partial: 0, 'not-started': 0 };
       reviewedTasks.forEach(task => { counts[task.status] = (counts[task.status] || 0) + 1; });
       const recap = `昨天的 ${reviewedTasks.length} 项行动已复盘：完成 ${counts.complete} 项，部分完成 ${counts.partial} 项，未开始 ${counts['not-started']} 项。每个完成的步骤都在推进长期目标。`;
       const date = dayStamp();
-      state.history.push({ date: reviewedDate, tasks: reviewedTasks, recap });
+      state.history.push({ date: reviewedDate, tasks: reviewedTasks, recap, ...(analysis ? { analysis } : {}) });
       state.dailyTasks = [];
       state.activeDate = date;
       state.focus = null;
@@ -453,7 +528,7 @@ const server = http.createServer(async (req, res) => {
         if (progress !== null) project.estimatedProgress = progress;
       }
       await writeState(state);
-      return send(res, 200, { ok: true, recap, counts, state });
+      return send(res, 200, { ok: true, recap, counts, analysis, analysisMessage, state });
     }
     if (req.method === 'POST' && url.pathname === '/api/chat') {
       const input = await bodyJson(req); const prefs = await readAiPrefs(); const provider = prefs.activeProvider;
