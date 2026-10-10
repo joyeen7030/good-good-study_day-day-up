@@ -165,7 +165,7 @@ function progressWizard(taskId, reminder = false) {
   }});
 }
 async function pauseFocus(paused) { await api('/api/focus/pause', { method: 'POST', body: JSON.stringify({ paused }) }); state = await api('/api/state'); render(); toast(paused ? '已暂停提醒' : '已继续计时'); }
-async function stopFocus(complete, calendarEvent = false) { const result = await api('/api/focus/stop', { method: 'POST', body: JSON.stringify({ complete, calendarEvent }) }); state = await api('/api/state'); render(); if (state.reviewRequired) { reviewWizard(); return; } if (!complete) toast('已结束当前陪跑'); else if (calendarEvent && result.calendar?.ok) toast(`已完成，并已记入${result.calendar.calendarTitle || '默认日历'}`); else if (calendarEvent && result.calendar) toast(`任务已完成，但日历记录失败：${result.calendar.error || '请检查日历权限'}`); else toast('任务已完成'); }
+async function stopFocus(complete) { const result = await api('/api/focus/stop', { method: 'POST', body: JSON.stringify({ complete }) }); state = await api('/api/state'); render(); if (state.reviewRequired) { reviewWizard(); return; } if (!complete) toast('已结束当前陪跑'); else if (result.calendar?.ok) toast(`已完成，并已记入${result.calendar.calendarTitle || '默认日历'}`); else if (result.calendar) toast(`任务已完成，但日历记录失败：${result.calendar.error || '请检查日历权限'}`); else toast('任务已完成'); }
 function formatDue(value) { if (!value) return '未设截止时间'; const date = new Date(value); return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`; }
 function statusLabel(status) { return ({ planned: '待开始', 'in-progress': '进行中', complete: '已完成', partial: '部分完成', 'not-started': '未开始' })[status] || '待开始'; }
 function formatDuration(seconds = 0) { const minutes = Math.floor(Number(seconds) / 60); const hours = Math.floor(minutes / 60); const rest = minutes % 60; return hours ? `${hours} 小时${rest ? ` ${rest} 分钟` : ''}` : `${rest} 分钟`; }
@@ -263,7 +263,7 @@ function renderFocus() {
 function bindFocusActions() {
   $$('[data-pause]').forEach(button => button.onclick = () => runAction(button, () => pauseFocus(button.dataset.pause === 'true')));
   $$('[data-ack]').forEach(button => button.onclick = () => progressWizard(button.dataset.ack));
-  $$('[data-focus-done]').forEach(button => button.onclick = () => runAction(button, () => stopFocus(true, true)));
+  $$('[data-focus-done]').forEach(button => button.onclick = () => runAction(button, () => stopFocus(true)));
   $$('[data-focus-stop]').forEach(button => button.onclick = () => runAction(button, () => stopFocus(false)));
 }
 function render() {
@@ -283,7 +283,7 @@ function render() {
     $(`#quad-${suffix}`).innerHTML = matches.length ? matches.map(task => `<div class="quad-task"><i class="quad-dot"></i><div><strong>${escapeHtml(task.title)}</strong><small>${escapeHtml(formatDue(task.dueAt))} · ${escapeHtml(statusLabel(task.status))}</small></div></div>`).join('') : '<div class="quad-empty">还没有排入此象限的任务</div>';
   }
   $('#projectsList').innerHTML = state.projects.map(project => { const actions = state.actions.filter(action => action.projectId === project.id); const progress = project.estimatedProgress ?? 0; const logSeconds = state.projectLogs.filter(log => log.projectId === project.id).reduce((sum, log) => sum + Number(log.durationSeconds || 0), 0); const countdown = projectCountdown(project.dueAt); return `<article class="project-card"><div class="project-top"><span class="project-icon">⌘</span><button class="task-menu" data-delete-project="${project.id}">···</button></div><h3>${escapeHtml(project.title)}</h3><p>${escapeHtml(project.description || '为这个项目补充一句目标描述。')}</p><div class="project-summary"><span class="project-countdown-mini ${countdown.overdue ? 'overdue' : ''}">${escapeHtml(countdown.label)}</span><span>累计 ${escapeHtml(formatDuration(logSeconds))}</span></div><div class="project-progress"><div class="progress-line"><span style="width:${progress}%"></span></div><div class="progress-meta"><span>行动估算 ${actions.length} 项</span><span>${progress}%</span></div><input type="range" min="0" max="100" value="${progress}" aria-label="校正项目进度" data-progress="${project.id}"></div><button class="text-button project-open" data-open-project="${project.id}">查看项目详情 →</button></article>`; }).join(''); $('#projectsEmpty').classList.toggle('hidden', state.projects.length > 0);
-  $('#historyList').innerHTML = [...state.history].reverse().map(item => { const count = { complete: 0, partial: 0, 'not-started': 0 }; item.tasks.forEach(task => { count[task.status] = (count[task.status] || 0) + 1; }); const analysis = item.analysis; return `<article class="history-card"><header><span>${escapeHtml(item.date)}</span><span>${item.tasks.length} 项</span></header><p>${escapeHtml(item.recap)}</p><div class="history-counts"><span>完成 ${count.complete}</span><span>部分完成 ${count.partial}</span><span>没开始 ${count['not-started']}</span></div>${analysis ? `<section class="review-insight"><strong>AI 习惯观察</strong><p><b>模式</b>${escapeHtml(analysis.pattern)}</p><p><b>依据</b>${escapeHtml(analysis.evidence)}</p><p><b>明天试试</b>${escapeHtml(analysis.experiment)}</p></section>` : ''}</article>`; }).join(''); $('#historyEmpty').classList.toggle('hidden', state.history.length > 0);
+  $('#historyList').innerHTML = [...state.history].reverse().map(item => { const count = { complete: 0, partial: 0, 'not-started': 0 }; item.tasks.forEach(task => { count[task.status] = (count[task.status] || 0) + 1; }); const analysis = item.analysis; return `<article class="history-card"><header><span>${escapeHtml(item.date)}</span><span>${item.tasks.length} 项</span></header><p>${escapeHtml(item.recap)}</p><div class="history-counts"><span>完成 ${count.complete}</span><span>部分完成 ${count.partial}</span><span>没开始 ${count['not-started']}</span></div>${analysis ? `<section class="review-insight"><strong>AI 习惯观察</strong><p><b>模式</b>${escapeHtml(analysis.pattern)}</p><p><b>依据</b>${escapeHtml(analysis.evidence)}</p><p><b>明天试试</b>${escapeHtml(analysis.experiment)}</p></section>` : `<button type="button" class="text-button review-retry" data-review-analyze="${escapeHtml(item.date)}">重新生成 AI 分析 →</button>`}</article>`; }).join(''); $('#historyEmpty').classList.toggle('hidden', state.history.length > 0);
   renderFocus(); renderProgressLog(); renderCalendarFailures(); bindActions();
 }
 function renderProgressLog() {
@@ -334,6 +334,11 @@ function bindActions() {
   $$('[data-progress]').forEach(input => input.onchange = async () => { const project = state.projects.find(item => item.id === input.dataset.progress); if (project) { project.estimatedProgress = Number(input.value); await save(); toast('项目进度已校正'); } });
   $$('[data-delete-project]').forEach(button => button.onclick = async () => { if (!confirm('删除这个项目？已归档行动会保留，但不会再关联项目。')) return; state.projects = state.projects.filter(project => project.id !== button.dataset.deleteProject); state.dailyTasks.forEach(task => { if (task.projectId === button.dataset.deleteProject) task.projectId = null; }); await save(); toast('项目已删除'); });
   $$('[data-open-project]').forEach(button => button.onclick = () => openProject(button.dataset.openProject));
+  $$('[data-review-analyze]').forEach(button => button.onclick = async () => {
+    button.disabled = true; button.textContent = '正在生成…';
+    try { const result = await api('/api/review/analyze', { method: 'POST', body: JSON.stringify({ date: button.dataset.reviewAnalyze }) }); state = result.state; render(); toast('复盘分析已生成'); }
+    catch (error) { button.disabled = false; button.textContent = '重新生成 AI 分析 →'; toast(error.message); }
+  });
 }
 async function runAction(button, action) {
   if (button.disabled) return;
@@ -363,7 +368,7 @@ async function init() {
   $('#addTaskButton').onclick = () => { const text = $('#quickInput').value.trim(); if (!text) return toast('先写下一件事。'); taskWizard(text, null, () => { $('#quickInput').value = ''; }); };
   $('#quickInput').addEventListener('keydown', event => { if (event.key === 'Enter') $('#addTaskButton').click(); }); $('#emptyAdd').onclick = () => $('#quickInput').focus(); $('#quadrantAdd').onclick = () => $('#quickInput').focus();
   $$('[data-open-import]').forEach(button => button.onclick = () => importWizard(button.dataset.openImport));
-  $('#newProjectButton').onclick = $('#projectAdd').onclick = $('#projectEmptyAdd').onclick = projectWizard;
+  $('#newProjectButton').onclick = $('#projectAdd').onclick = $('#projectEmptyAdd').onclick = () => projectWizard();
   $('#projectBack').onclick = () => goView('projects');
   $('#collapseChat').onclick = () => $('#companionPanel').classList.toggle('collapsed');
   $('#settingsButton').onclick = () => openAiSettings().catch(error => toast(error.message));

@@ -169,6 +169,11 @@ async function providerModels(provider, apiKey) {
   return models.length ? models : [spec.model];
 }
 function safeProviderError(error) { return String(error?.message || 'AI 请求失败。').slice(0, 300); }
+function glmReviewOptions(model) {
+  // glm-5 uses most of a small output budget for hidden reasoning unless thinking is disabled.
+  // The newer glm-5.3 requires thinking to stay enabled, so only target the configured glm-5 model.
+  return String(model).toLowerCase() === 'glm-5' ? { thinking: { type: 'disabled' } } : {};
+}
 function parseReviewAnalysis(text) {
   const source = String(text || '').trim();
   const candidate = source.match(/\{[\s\S]*\}/)?.[0];
@@ -231,10 +236,11 @@ async function analyzeDailyReview(state, reviewedTasks, reviewedDate) {
     const messages = [{ role: 'system', content: system }, { role: 'user', content: JSON.stringify(context) }];
     const requestBody = responsesApi
       ? { model, instructions: system, input: [{ role: 'user', content: JSON.stringify(context) }], max_output_tokens: 350 }
-      : { model, messages, stream: false, max_tokens: 350, temperature: 0.4 };
+      : { model, messages, stream: false, max_tokens: 700, temperature: 0.4, ...(provider === 'glm' ? glmReviewOptions(model) : {}) };
     const response = await fetch(`${spec.baseUrl}/${responsesApi ? 'responses' : 'chat/completions'}`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody), signal: AbortSignal.timeout(60_000) });
     const raw = await response.text(); let result; try { result = JSON.parse(raw); } catch { result = {}; }
     if (!response.ok) throw new Error(result.error?.message || `AI 服务请求失败（${response.status}）。`);
+    if (result.choices?.[0]?.finish_reason === 'length') throw new Error('AI 输出达到长度上限，复盘正文没有生成；请重试。');
     const reply = responsesApi
       ? (result.output_text || result.output?.filter(item => item.type === 'message').flatMap(item => item.content || []).filter(item => item.type === 'output_text' || item.type === 'text').map(item => item.text).join(''))
       : result.choices?.[0]?.message?.content;
@@ -451,7 +457,7 @@ const server = http.createServer(async (req, res) => {
         recordFocusTime(state);
         const task = state.dailyTasks.find(item => item.id === state.focus.taskId);
         if (task) task.status = input.complete ? 'complete' : 'planned';
-        if (input.complete && input.calendarEvent === true && task) {
+        if (input.complete && task) {
           const entry = { id: crypto.randomUUID(), taskId: task.id, title: task.title, startedAt: state.focus.wallStartedAt || state.focus.startedAt, endedAt: endedAt.toISOString(), status: 'pending' };
           calendar = addCalendarEvent(entry);
           entry.status = calendar.ok ? 'saved' : 'failed';
@@ -530,6 +536,18 @@ const server = http.createServer(async (req, res) => {
       await writeState(state);
       return send(res, 200, { ok: true, recap, counts, analysis, analysisMessage, state });
     }
+    if (req.method === 'POST' && url.pathname === '/api/review/analyze') {
+      const input = await bodyJson(req);
+      const state = await readState();
+      const review = state.history.find(item => item.date === input.date);
+      if (!review) return send(res, 404, { error: '找不到这一天的复盘记录。' });
+      if (review.analysis) return send(res, 200, { ok: true, analysis: review.analysis, state });
+      const { analysis, analysisMessage } = await analyzeDailyReview(state, review.tasks || [], review.date);
+      if (!analysis) return send(res, 502, { error: analysisMessage || 'AI 分析未生成，请重试。' });
+      review.analysis = analysis;
+      await writeState(state);
+      return send(res, 200, { ok: true, analysis, state });
+    }
     if (req.method === 'POST' && url.pathname === '/api/chat') {
       const input = await bodyJson(req); const prefs = await readAiPrefs(); const provider = prefs.activeProvider;
       const spec = aiProviders[provider]; const apiKey = spec ? await keychainGet(provider) : null;
@@ -550,7 +568,7 @@ const server = http.createServer(async (req, res) => {
         const responsesApi = provider !== 'glm';
         const requestBody = responsesApi
           ? { model, instructions: system, input: messages, max_output_tokens: 700 }
-          : { model, messages: [{ role: 'system', content: system }, ...messages], stream: false, max_tokens: 700 };
+          : { model, messages: [{ role: 'system', content: system }, ...messages], stream: false, max_tokens: 900, ...(provider === 'glm' ? glmReviewOptions(model) : {}) };
         const response = await fetch(`${spec.baseUrl}/${responsesApi ? 'responses' : 'chat/completions'}`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody), signal: AbortSignal.timeout(60_000) });
         const raw = await response.text(); let result; try { result = JSON.parse(raw); } catch { result = {}; }
         if (!response.ok) return send(res, 502, { error: result.error?.message || `AI 服务请求失败（${response.status}）。` });
